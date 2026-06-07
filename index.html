@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Relationship Copilot | Crypto Growth CRM</title>
+    <meta name="description" content="匯入 Telegram、LINE、IG、FB、LinkedIn 聊天紀錄，分析人脈價值、流失風險與本週該聯絡的人。" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#workspace" aria-label="AI Relationship Copilot">
+        <span class="brand-mark">RC</span>
+        <span>
+          <strong>Relationship Copilot</strong>
+          <small>Crypto Growth CRM</small>
+        </span>
+      </a>
+      <nav aria-label="主要功能">
+        <a href="#workspace">工作台</a>
+        <a href="#contacts">分析結果</a>
+        <a href="#connectors">平台連接</a>
+      </nav>
+    </header>
+
+    <main id="workspace" class="shell">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">AI Relationship Copilot</p>
+          <h1>把聊天紀錄變成人脈資產儀表板。</h1>
+          <p>
+            不再要求你手打一堆欄位。匯入 Telegram JSON/HTML、LINE txt、IG/FB/LinkedIn 對話文字或 CRM 匯出檔，
+            系統會自動整理人名、互動頻率、最後聯絡時間、商業意圖與本週優先行動。
+          </p>
+        </div>
+        <div class="hero-panel" aria-label="本週摘要">
+          <div><span>本週優先聯絡</span><strong id="heroPriority">0</strong></div>
+          <div><span>沉睡關係</span><strong id="heroDormant">0</strong></div>
+          <div><span>流失風險</span><strong id="heroRisk">0</strong></div>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <aside class="panel import-panel">
+          <div class="section-head">
+            <p class="eyebrow">Chat Import</p>
+            <h2>匯入社交軟體聊天紀錄</h2>
+          </div>
+
+          <div class="platform-picker" role="group" aria-label="選擇平台格式">
+            <button class="platform active" type="button" data-platform="auto">自動判斷</button>
+            <button class="platform" type="button" data-platform="telegram">Telegram</button>
+            <button class="platform" type="button" data-platform="line">LINE</button>
+            <button class="platform" type="button" data-platform="social">IG / FB / LinkedIn</button>
+          </div>
+
+          <label id="dropZone" class="drop-zone" for="chatFile">
+            <input id="chatFile" type="file" accept=".json,.txt,.html,.htm,.csv" multiple />
+            <span>拖拉聊天紀錄到這裡</span>
+            <strong>支援 Telegram JSON/HTML、LINE txt、一般聊天文字、CSV</strong>
+            <small>資料只在瀏覽器本機解析，不會上傳到任何伺服器。</small>
+          </label>
+
+          <div class="import-status">
+            <span id="fileStatus">尚未匯入檔案，已載入範例聊天紀錄。</span>
+            <button id="sampleButton" class="button secondary" type="button">載入範例聊天</button>
+          </div>
+
+          <details class="paste-box">
+            <summary>或貼上聊天紀錄文字</summary>
+            <textarea id="importInput" spellcheck="false"></textarea>
+            <button id="analyzeButton" class="button primary wide" type="button">解析貼上的聊天紀錄</button>
+          </details>
+
+          <div id="parsePreview" class="parse-preview"></div>
+        </aside>
+
+        <section id="contacts" class="main-panel">
+          <div class="section-head inline">
+            <div>
+              <p class="eyebrow">Relationship Assets</p>
+              <h2>人脈資產分析</h2>
+            </div>
+            <div class="toolbar" role="group" aria-label="篩選">
+              <button class="filter active" type="button" data-filter="all">全部</button>
+              <button class="filter" type="button" data-filter="priority">本週優先</button>
+              <button class="filter" type="button" data-filter="risk">流失風險</button>
+              <button class="filter" type="button" data-filter="dormant">90 天未互動</button>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <article><small>辨識人脈</small><strong id="metricTotal">0</strong><span>從聊天紀錄整理</span></article>
+            <article><small>高價值</small><strong id="metricHighValue">0</strong><span>值得主動經營</span></article>
+            <article><small>活躍上升</small><strong id="metricRising">0</strong><span>近期互動密集</span></article>
+            <article><small>平均健康度</small><strong id="metricHealth">0%</strong><span>關係穩定程度</span></article>
+          </div>
+
+          <div id="contactList" class="contact-list"></div>
+        </section>
+
+        <aside class="panel action-panel">
+          <div class="section-head">
+            <p class="eyebrow">Next Best Actions</p>
+            <h2>這週最值得聯絡的人</h2>
+          </div>
+          <div id="actionList" class="action-list"></div>
+          <div class="playbook">
+            <h3>AI 經營建議</h3>
+            <ul id="playbookList"></ul>
+          </div>
+        </aside>
+      </section>
+
+      <section id="connectors" class="connector-section">
+        <div class="section-head inline">
+          <div>
+            <p class="eyebrow">Official Connectors</p>
+            <h2>平台直接串接路線</h2>
+          </div>
+          <p>真實讀取私訊需要官方 app key、使用者授權與平台審核。這裡先把產品入口與需要的權限做出來。</p>
+        </div>
+        <div class="connector-grid">
+          <article>
+            <span class="source tg">TG</span>
+            <h3>Telegram</h3>
+            <p>可用 Bot API / Telegram Export JSON 起步。私訊完整讀取通常需要使用者匯出或自行授權 client。</p>
+            <button class="button secondary" type="button" data-connect="Telegram">設定 Bot Token</button>
+          </article>
+          <article>
+            <span class="source line">LN</span>
+            <h3>LINE</h3>
+            <p>可先支援 LINE 聊天備份 txt。官方 Messaging API 偏向官方帳號與 webhook，不等於直接讀個人私訊。</p>
+            <button class="button secondary" type="button" data-connect="LINE">設定 Channel</button>
+          </article>
+          <article>
+            <span class="source ig">IG</span>
+            <h3>IG / FB</h3>
+            <p>需要 Meta App、登入授權與權限審核。適合先接粉專/商業帳號訊息，不建議一開始做個人私訊。</p>
+            <button class="button secondary" type="button" data-connect="Meta">設定 Meta App</button>
+          </article>
+          <article>
+            <span class="source in">IN</span>
+            <h3>LinkedIn</h3>
+            <p>LinkedIn 私訊與關係資料限制較多。MVP 建議先用匯出檔、CRM、會議紀錄與手動補充。</p>
+            <button class="button secondary" type="button" data-connect="LinkedIn">設定 OAuth</button>
+          </article>
+        </div>
+
+        <div class="connector-guide">
+          <div class="section-head">
+            <p class="eyebrow">Setup Guide</p>
+            <h2>用戶怎麼開始用</h2>
+          </div>
+
+          <details class="guide-card" open>
+            <summary>
+              <span class="source tg">TG</span>
+              <strong>Telegram：最快 MVP，用匯出檔或 Bot 起步</strong>
+            </summary>
+            <div class="guide-body">
+              <div>
+                <h3>一般用戶</h3>
+                <ol>
+                  <li>打開 Telegram Desktop。</li>
+                  <li>進入要分析的聊天、群組或頻道。</li>
+                  <li>選擇 Export chat history。</li>
+                  <li>格式選 JSON，若不方便就選 HTML。</li>
+                  <li>把匯出的檔案拖進本工具。</li>
+                </ol>
+              </div>
+              <div>
+                <h3>團隊或社群主</h3>
+                <ol>
+                  <li>建立 Telegram Bot。</li>
+                  <li>把 Bot 加進群組並給讀訊息權限。</li>
+                  <li>把 Bot Token 填到連接器設定。</li>
+                  <li>之後可改成每日自動同步群內互動。</li>
+                </ol>
+              </div>
+            </div>
+            <p class="guide-note">注意：個人私訊不建議用 Bot 偷讀，應用官方匯出檔或明確授權流程。</p>
+          </details>
+
+          <details class="guide-card">
+            <summary>
+              <span class="source line">LN</span>
+              <strong>LINE：先用聊天備份，官方帳號再接 webhook</strong>
+            </summary>
+            <div class="guide-body">
+              <div>
+                <h3>一般用戶</h3>
+                <ol>
+                  <li>在 LINE 打開指定聊天。</li>
+                  <li>進入聊天設定。</li>
+                  <li>選擇匯出聊天紀錄。</li>
+                  <li>取得 txt 檔後拖進本工具。</li>
+                </ol>
+              </div>
+              <div>
+                <h3>官方帳號</h3>
+                <ol>
+                  <li>建立 LINE Developers Channel。</li>
+                  <li>開啟 Messaging API。</li>
+                  <li>設定 Webhook URL。</li>
+                  <li>把 Channel Secret / Access Token 填進連接器。</li>
+                </ol>
+              </div>
+            </div>
+            <p class="guide-note">LINE Messaging API 主要服務官方帳號，不等於可以直接讀個人 LINE 私訊。</p>
+          </details>
+
+          <details class="guide-card">
+            <summary>
+              <span class="source ig">IG</span>
+              <strong>IG / FB：適合商業帳號與粉專訊息</strong>
+            </summary>
+            <div class="guide-body">
+              <div>
+                <h3>快速使用</h3>
+                <ol>
+                  <li>先從 Meta 下載你的資料，或複製對話文字。</li>
+                  <li>把訊息文字貼到聊天紀錄輸入區。</li>
+                  <li>選擇 IG / FB / LinkedIn 格式後解析。</li>
+                </ol>
+              </div>
+              <div>
+                <h3>正式串接</h3>
+                <ol>
+                  <li>建立 Meta App。</li>
+                  <li>連接 Facebook Page 或 Instagram Business Account。</li>
+                  <li>申請 Messenger / Instagram Messaging 權限。</li>
+                  <li>通過審核後設定 webhook 同步訊息。</li>
+                </ol>
+              </div>
+            </div>
+            <p class="guide-note">Meta 權限審核較嚴，MVP 應先從商業帳號、粉專訊息與匯出檔做起。</p>
+          </details>
+
+          <details class="guide-card">
+            <summary>
+              <span class="source in">IN</span>
+              <strong>LinkedIn：先接 CRM、會議紀錄與匯出資料</strong>
+            </summary>
+            <div class="guide-body">
+              <div>
+                <h3>快速使用</h3>
+                <ol>
+                  <li>匯出 LinkedIn connections 或 CRM 名單。</li>
+                  <li>補上最近會議紀錄、Email 摘要或對話文字。</li>
+                  <li>匯入本工具做關係健康度分析。</li>
+                </ol>
+              </div>
+              <div>
+                <h3>正式串接</h3>
+                <ol>
+                  <li>建立 LinkedIn Developer App。</li>
+                  <li>設定 OAuth Redirect URL。</li>
+                  <li>申請可用的 Profile / Organization 權限。</li>
+                  <li>把資料回寫到 CRM 或本工具的人脈資料庫。</li>
+                </ol>
+              </div>
+            </div>
+            <p class="guide-note">LinkedIn 對私訊與關係資料限制很高，建議不要把私訊直連當第一版核心。</p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="connectorDialog">
+      <form method="dialog" class="dialog-card">
+        <h3 id="connectorTitle">設定連接器</h3>
+        <p id="connectorCopy"></p>
+        <label>App Key / Token<input id="connectorKey" type="password" placeholder="貼上平台提供的 key" /></label>
+        <label>Webhook / Callback URL<input id="connectorUrl" type="url" placeholder="https://your-domain.com/callback" /></label>
+        <div class="button-row">
+          <button class="button primary" value="save">儲存設定</button>
+          <button class="button secondary" value="cancel">取消</button>
+        </div>
+      </form>
+    </dialog>
+
+    <template id="contactTemplate">
+      <article class="contact-card">
+        <div class="contact-top">
+          <span class="avatar"></span>
+          <div><h3></h3><small></small></div>
+          <strong class="score"></strong>
+        </div>
+        <p></p>
+        <div class="tags"></div>
+        <div class="contact-meta"></div>
+        <div class="recommendation"></div>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
