@@ -2,6 +2,17 @@
 
 Crypto Growth CRM 的聊天紀錄分析版。
 
+## 產品定位
+
+這版參考成熟 Revenue Intelligence 工具的產品結構，但改成 Crypto BD / KOL / Agent / 社群主使用的 Relationship Intelligence OS。
+
+核心流程：
+
+- Capture：擷取 TG、LINE、IG、FB、LinkedIn、Email、會議紀錄等互動
+- Understand：用聊天證據分析人脈價值與合作可能
+- Prioritize：找出高價值、流失風險、活躍上升、疑似模板訊息
+- Act：產生本週聯絡清單、推薦合作方式與 follow-up 角度
+
 ## 怎麼使用
 
 直接打開 `index.html`。可以拖拉或選擇聊天紀錄檔案，也可以展開「貼上聊天紀錄文字」手動貼上。
