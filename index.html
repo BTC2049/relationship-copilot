@@ -56,14 +56,19 @@
 
           <label id="dropZone" class="drop-zone" for="chatFile">
             <input id="chatFile" type="file" accept=".json,.txt,.html,.htm,.csv" multiple />
+            <input id="folderInput" type="file" webkitdirectory directory multiple />
             <span>拖拉聊天紀錄到這裡</span>
-            <strong>支援 Telegram JSON/HTML、LINE txt、一般聊天文字、CSV</strong>
+            <strong>支援單檔，也支援直接選 IG 匯出的整個大資料夾</strong>
+            <small>例如直接選 Downloads/IG 最外層資料夾，工具會自動略過 media、ads、settings，只抓 messages、connections 等資料。</small>
             <small>資料只在瀏覽器本機解析，不會上傳到任何伺服器。</small>
           </label>
 
           <div class="import-status">
             <span id="fileStatus">尚未匯入檔案，已載入範例聊天紀錄。</span>
-            <button id="sampleButton" class="button secondary" type="button">載入範例聊天</button>
+            <div class="button-row">
+              <button id="folderButton" class="button primary" type="button">選擇 IG 匯出資料夾</button>
+              <button id="sampleButton" class="button secondary" type="button">載入範例聊天</button>
+            </div>
           </div>
 
           <details class="paste-box">

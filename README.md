@@ -8,6 +8,7 @@ Crypto Growth CRM 的聊天紀錄分析版。
 
 目前支援：
 
+- 直接選擇 Instagram 匯出的整個最外層資料夾
 - Telegram 匯出的 JSON
 - Telegram 匯出的 HTML 文字解析
 - LINE 聊天備份 txt
@@ -16,6 +17,18 @@ Crypto Growth CRM 的聊天紀錄分析版。
 - CSV 或 CRM 匯出文字的簡易解析
 
 資料只在瀏覽器本機解析，不會上傳到任何伺服器。
+
+## Instagram 整包資料夾匯入
+
+如果 IG 匯出後有很多資料夾，例如 `media`、`connections`、`logged_information`、`personal_information`、`your_instagram_activity`、`ads_information`，不需要手動挑檔案。
+
+在工具裡按「選擇 IG 匯出資料夾」，選最外層資料夾即可。工具會自動：
+
+- 略過圖片、影片、廣告、登入紀錄、偏好設定等低價值資料
+- 優先讀取 `messages`、`inbox`、`message_requests`
+- 讀取 `connections`、`followers`、`following`
+- 補抓 `personal_information` 裡可能有用的聯絡訊號
+- 把可用資料轉成同一套人脈分析格式
 
 ## 目前會分析
 

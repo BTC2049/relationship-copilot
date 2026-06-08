@@ -15,7 +15,9 @@ const els = {
   importInput: document.querySelector("#importInput"),
   analyzeButton: document.querySelector("#analyzeButton"),
   sampleButton: document.querySelector("#sampleButton"),
+  folderButton: document.querySelector("#folderButton"),
   chatFile: document.querySelector("#chatFile"),
+  folderInput: document.querySelector("#folderInput"),
   dropZone: document.querySelector("#dropZone"),
   fileStatus: document.querySelector("#fileStatus"),
   parsePreview: document.querySelector("#parsePreview"),
@@ -57,6 +59,8 @@ function wireEvents() {
     analyzeText(sampleChat, "範例聊天紀錄");
   });
   els.chatFile.addEventListener("change", (event) => handleFiles(event.target.files));
+  els.folderInput.addEventListener("change", (event) => handleFiles(event.target.files, { sourceType: "folder" }));
+  els.folderButton.addEventListener("click", () => els.folderInput.click());
 
   ["dragenter", "dragover"].forEach((name) => {
     els.dropZone.addEventListener(name, (event) => {
@@ -70,7 +74,7 @@ function wireEvents() {
       els.dropZone.classList.remove("dragging");
     });
   });
-  els.dropZone.addEventListener("drop", (event) => handleFiles(event.dataTransfer.files));
+  els.dropZone.addEventListener("drop", (event) => handleFiles(event.dataTransfer.files, { sourceType: "drop" }));
 
   els.platformButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -94,19 +98,30 @@ function wireEvents() {
   });
 }
 
-async function handleFiles(fileList) {
+async function handleFiles(fileList, options = {}) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
 
+  const selected = selectUsefulFiles(files);
+  if (!selected.length) {
+    els.fileStatus.textContent = "這個資料夾沒有找到可解析的人脈資料。請確認有 messages、inbox、connections、followers 或 txt/json/html/csv 檔案。";
+    return;
+  }
+
+  els.fileStatus.textContent = `正在掃描 ${files.length} 個檔案，挑出 ${selected.length} 個可能有用的資料檔...`;
   const payloads = await Promise.all(
-    files.map(async (file) => ({
+    selected.map(async (file) => ({
       name: file.name,
+      path: file.webkitRelativePath || file.name,
       text: await file.text()
     }))
   );
-  const combined = payloads.map((item) => item.text).join("\n");
+  const combined = payloads.map((item) => `\n--- FILE: ${item.path} ---\n${item.text}`).join("\n");
   els.importInput.value = combined.slice(0, 40000);
-  analyzeText(combined, payloads.map((item) => item.name).join(", "));
+  analyzePayloads(payloads, {
+    sourceName: options.sourceType === "folder" ? "IG 匯出資料夾" : payloads.map((item) => item.name).join(", "),
+    totalFiles: files.length
+  });
 }
 
 function analyzeText(text, sourceName) {
@@ -115,6 +130,36 @@ function analyzeText(text, sourceName) {
   els.fileStatus.textContent = `${sourceName}：解析出 ${rawMessages.length} 則訊息、${contacts.length} 位人脈`;
   renderPreview();
   render();
+}
+
+function analyzePayloads(payloads, meta) {
+  rawMessages = payloads.flatMap((payload) => parseFilePayload(payload));
+  contacts = buildContacts(rawMessages).map(scoreContact).sort((a, b) => b.priorityScore - a.priorityScore);
+  const usefulPaths = payloads.slice(0, 5).map((item) => shortPath(item.path)).join("、");
+  els.fileStatus.textContent = `${meta.sourceName}：掃描 ${meta.totalFiles} 個檔案，使用 ${payloads.length} 個，解析出 ${rawMessages.length} 則訊息、${contacts.length} 位人脈`;
+  renderPreview({ usefulPaths });
+  render();
+}
+
+function selectUsefulFiles(files) {
+  const allowed = /\.(json|txt|html?|csv)$/i;
+  const usefulPath = /(messages|inbox|message_requests|connections|followers|following|personal_information|contacts|profile|comments|likes|recently_viewed)/i;
+  const ignorePath = /(media|photos|videos|stickers|ads_information|advertisers|security_and_login|logged_information|preferences|apps_and_websites|autofill|settings|monetization)/i;
+  return files
+    .filter((file) => allowed.test(file.name))
+    .map((file) => ({ file, path: (file.webkitRelativePath || file.name).replaceAll("\\", "/") }))
+    .filter(({ path }) => usefulPath.test(path) && !ignorePath.test(path))
+    .slice(0, 260)
+    .map(({ file }) => file);
+}
+
+function parseFilePayload(payload) {
+  const path = (payload.path || payload.name || "").replaceAll("\\", "/");
+  const text = payload.text || "";
+  if (/connections\/followers|followers_and_following|following|followers/i.test(path)) return parseInstagramConnections(text, path);
+  if (/personal_information|profile_information|account_information/i.test(path)) return parseInstagramProfileInfo(text, path);
+  if (/messages|inbox|message_requests/i.test(path)) return parseInstagramMessages(text, path);
+  return parseMessages(text, selectedPlatform);
 }
 
 function parseMessages(text, platform) {
@@ -142,6 +187,129 @@ function parseTelegramJson(text) {
   } catch {
     return parseGenericChat(text, "Telegram");
   }
+}
+
+function parseInstagramMessages(text, path) {
+  if (!looksLikeJson(text)) return parseMessages(text, "Instagram");
+  try {
+    const data = JSON.parse(text);
+    if (Array.isArray(data)) {
+      return data.flatMap((item) => parseInstagramThread(item, path));
+    }
+    if (Array.isArray(data.messages) || Array.isArray(data.participants)) {
+      return parseInstagramThread(data, path);
+    }
+    if (data.inbox && typeof data.inbox === "object") {
+      return Object.values(data.inbox).flatMap((item) => parseInstagramThread(item, path));
+    }
+    return [];
+  } catch {
+    return parseMessages(text, "Instagram");
+  }
+}
+
+function parseInstagramThread(thread, path) {
+  const participants = (thread.participants || [])
+    .map((item) => normalizeSender(item.name || item.username || item))
+    .filter(Boolean);
+  const fallbackSender = senderFromPath(path);
+  return (thread.messages || [])
+    .map((message) => {
+      const sender = normalizeSender(message.sender_name || message.sender || fallbackSender);
+      return {
+        platform: "Instagram",
+        sender,
+        date: parseMetaTimestamp(message.timestamp_ms || message.timestamp || message.created_at),
+        text: normalizeMessageText(message.content || message.text || message.share?.link || message.photos?.[0]?.uri || "")
+      };
+    })
+    .filter((item) => item.sender && item.text)
+    .map((item) => ({
+      ...item,
+      sender: item.sender === "Unknown" && participants[0] ? participants[0] : item.sender
+    }));
+}
+
+function parseInstagramConnections(text, path) {
+  const label = /following/i.test(path) ? "Following" : /followers/i.test(path) ? "Follower" : "Instagram Connection";
+  if (!looksLikeJson(text)) return parseDelimitedConnections(text, label);
+  try {
+    const data = JSON.parse(text);
+    const rows = flattenConnectionRows(data);
+    return rows
+      .map((row) => {
+        const name = normalizeSender(row.title || row.name || row.username || row.href || row.value || "Instagram Contact");
+        const date = parseMetaTimestamp(row.timestamp || row.timestamp_ms || row.date);
+        return {
+          platform: "Instagram",
+          sender: name,
+          date,
+          text: `${label} ${row.href || row.value || name}`
+        };
+      })
+      .filter((item) => item.sender);
+  } catch {
+    return parseDelimitedConnections(text, label);
+  }
+}
+
+function parseInstagramProfileInfo(text, path) {
+  if (!looksLikeJson(text)) return [];
+  try {
+    const data = JSON.parse(text);
+    const values = [];
+    collectStrings(data, values);
+    return values
+      .filter((value) => /@|instagram|telegram|line|linkedin|http|email|mail/i.test(value))
+      .slice(0, 30)
+      .map((value, index) => ({
+        platform: "Instagram",
+        sender: `Profile Signal ${index + 1}`,
+        date: now,
+        text: `Profile information signal from ${shortPath(path)}: ${value}`
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function parseDelimitedConnections(text, label) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 500)
+    .map((line) => ({
+      platform: "Instagram",
+      sender: normalizeSender(line.split(/,|\t/)[0] || line),
+      date: now,
+      text: `${label} ${line}`
+    }));
+}
+
+function flattenConnectionRows(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.flatMap(flattenConnectionRows);
+  if (typeof value !== "object") return [];
+  const rows = [];
+  if (value.title || value.name || value.username || value.href || value.value) rows.push(value);
+  Object.values(value).forEach((child) => {
+    if (Array.isArray(child) || (child && typeof child === "object")) rows.push(...flattenConnectionRows(child));
+  });
+  return rows;
+}
+
+function collectStrings(value, bucket) {
+  if (!value || bucket.length > 120) return;
+  if (typeof value === "string") {
+    bucket.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStrings(item, bucket));
+    return;
+  }
+  if (typeof value === "object") Object.values(value).forEach((item) => collectStrings(item, bucket));
 }
 
 function parseLineText(text) {
@@ -311,13 +479,15 @@ function render() {
   renderPlaybook();
 }
 
-function renderPreview() {
+function renderPreview(extra = {}) {
   els.parsePreview.innerHTML = `
     <strong>解析預覽</strong>
     <span>${rawMessages.length} 則訊息</span>
     <span>${contacts.length} 位人脈</span>
     <span>${contacts.filter((item) => item.platform === "Telegram").length} 位 Telegram</span>
     <span>${contacts.filter((item) => item.platform === "LINE").length} 位 LINE</span>
+    <span>${contacts.filter((item) => item.platform === "Instagram").length} 位 Instagram</span>
+    ${extra.usefulPaths ? `<small>使用檔案：${escapeHtml(extra.usefulPaths)}</small>` : ""}
   `;
 }
 
@@ -424,6 +594,26 @@ function parseDate(value) {
   const normalized = String(value).replace(/\//g, "-");
   const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? now : date;
+}
+
+function parseMetaTimestamp(value) {
+  if (!value) return now;
+  const number = Number(value);
+  if (!Number.isNaN(number)) return new Date(number > 9999999999 ? number : number * 1000);
+  return parseDate(value);
+}
+
+function senderFromPath(path) {
+  const parts = String(path || "").split(/[\\/]/).filter(Boolean);
+  const inboxIndex = parts.findIndex((part) => /inbox|message_requests/i.test(part));
+  const folder = inboxIndex >= 0 ? parts[inboxIndex + 1] : parts.at(-2);
+  if (!folder) return "Instagram Contact";
+  return normalizeSender(folder.replace(/_\d+$/g, "").replace(/[_-]+/g, " "));
+}
+
+function shortPath(path) {
+  const parts = String(path || "").split(/[\\/]/).filter(Boolean);
+  return parts.slice(-3).join("/");
 }
 
 function countMatches(text, terms) {
