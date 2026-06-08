@@ -390,21 +390,26 @@ function scoreContact(contact) {
   const lower = allText.toLowerCase();
   const lastContactDays = Math.max(0, Math.round((now - contact.lastSeen) / DAY_MS));
   const messageCount = contact.messages.length;
-  const businessHits = countMatches(lower, ["合作", "campaign", "listing", "上幣", "bd", "ama", "referral", "客戶", "交易所", "cex", "liquidity", "market maker", "投資人", "商會", "顧問", "budget"]);
-  const urgencyHits = countMatches(lower, ["this week", "這週", "下週", "最近", "updated", "回升", "熱", "找", "需要", "可以"]);
-  const valueScore = Math.min(100, 42 + businessHits * 12 + messageCount * 4);
-  const interactionScore = Math.min(100, 34 + messageCount * 12 + urgencyHits * 7 - Math.max(0, lastContactDays - 30) * 0.22);
-  const rising = interactionScore >= 70 && lastContactDays <= 45;
+  const exchange = analyzeExchange(contact);
+  const bot = analyzeBotLike(contact, exchange);
+  const language = analyzeLanguage(contact);
+  const dimensions = analyzeDimensions(contact);
+  const valueScore = calculateEvidenceValue(dimensions, exchange, bot);
+  const interactionScore = calculateInteractionScore(contact, exchange, bot, lastContactDays);
+  const rising = interactionScore >= 70 && lastContactDays <= 45 && !bot.isLikelyBot;
   const dormant = lastContactDays >= 90;
-  const risk = valueScore >= 70 && lastContactDays >= 75;
+  const risk = valueScore >= 70 && lastContactDays >= 75 && exchange.replyEvidenceCount > 0;
   const freshness = Math.max(0, 100 - lastContactDays);
   const healthScore = Math.round(interactionScore * 0.46 + freshness * 0.34 + valueScore * 0.2);
-  const priorityScore = Math.round(valueScore * 0.45 + Math.min(100, lastContactDays / 1.8) * 0.28 + interactionScore * 0.22 + (rising ? 8 : 0));
+  const priorityScore = Math.round(valueScore * 0.52 + interactionScore * 0.24 + Math.min(100, lastContactDays / 1.8) * 0.14 + (rising ? 8 : 0) - (bot.isLikelyBot ? 34 : 0));
   const tags = inferTags(lower, contact.platform);
+  const confidence = calculateConfidence(contact, dimensions, exchange, bot);
+  const personType = inferPersonType(dimensions, lower, valueScore);
+  const collaboration = inferCollaboration(personType, dimensions, bot, confidence);
 
   return {
     ...contact,
-    role: inferRole(lower),
+    role: personType,
     tags,
     lastContactDays,
     interactionScore: Math.round(interactionScore),
@@ -414,10 +419,153 @@ function scoreContact(contact) {
     risk,
     healthScore: clamp(Math.round(healthScore), 0, 100),
     priorityScore: clamp(Math.round(priorityScore), 0, 100),
-    segment: getSegment({ valueScore, rising, dormant, risk }),
+    segment: getSegment({ valueScore, rising, dormant, risk, bot }),
     note: contact.messages.at(-1)?.text || "",
-    recommendation: getRecommendation(contact, { rising, dormant, risk, valueScore, tags })
+    recommendation: getRecommendation(contact, { rising, dormant, risk, valueScore, tags, bot, confidence, collaboration }),
+    dimensions,
+    exchange,
+    bot,
+    language,
+    confidence,
+    personType,
+    collaboration,
+    aiSummary: buildAiSummary({ dimensions, personType, collaboration, confidence, bot })
   };
+}
+
+function analyzeDimensions(contact) {
+  return {
+    resources: scoreDimension(contact, "資源能力", [
+      { label: "客戶資源", weight: 2, terms: ["客戶", "client", "user", "用戶", "高淨值", "vip"] },
+      { label: "社群資源", weight: 2, terms: ["社群", "群", "telegram", "tg", "discord", "community"] },
+      { label: "媒體資源", weight: 2, terms: ["媒體", "media", "kol", "influencer", "youtube", "ig", "短影音"] },
+      { label: "商業資源", weight: 2, terms: ["合作", "資源", "business", "bd", "campaign", "partner", "聯名"] },
+      { label: "產業資源", weight: 2, terms: ["交易所", "cex", "項目", "project", "market maker", "liquidity", "vc", "fund"] }
+    ]),
+    influence: scoreDimension(contact, "人脈影響力", [
+      { label: "大量人脈", weight: 2, terms: ["介紹", "認識", "connect", "intro", "朋友", "商會", "network"] },
+      { label: "經常介紹合作", weight: 2, terms: ["介紹你", "幫你介紹", "referral", "refer", "合作方"] },
+      { label: "團隊", weight: 2, terms: ["團隊", "team", "我們團隊", "our team"] },
+      { label: "管理職", weight: 2, terms: ["負責", "manage", "head", "lead", "主管", "founder", "co-founder"] },
+      { label: "產業影響力", weight: 2, terms: ["kol", "社群主", "商會", "speaker", "媒體", "channel"] }
+    ]),
+    crypto: scoreDimension(contact, "加密貨幣相關度", [
+      { label: "加密貨幣", weight: 2, terms: ["crypto", "加密", "web3", "defi", "usdt", "btc", "eth"] },
+      { label: "交易", weight: 2, terms: ["交易", "trade", "trading", "量化", "出入金"] },
+      { label: "交易所", weight: 2, terms: ["交易所", "exchange", "cex", "listing", "上幣"] },
+      { label: "KOL", weight: 2, terms: ["kol", "influencer", "creator", "twitter", "x ", "youtube"] },
+      { label: "Web3", weight: 2, terms: ["web3", "nft", "airdrop", "鏈", "wallet", "dao"] }
+    ]),
+    willingness: scoreDimension(contact, "合作意願", [
+      { label: "願意交流", weight: 2, terms: ["聊", "交流", "sync", "call", "meeting", "quick sync", "討論"] },
+      { label: "分享資訊", weight: 2, terms: ["分享", "整理", "給你", "send", "updated", "資料"] },
+      { label: "介紹人脈", weight: 2, terms: ["介紹", "intro", "referral", "connect you", "幫你"] },
+      { label: "願意合作", weight: 2, terms: ["合作", "一起", "partner", "collab", "可以"] }
+    ]),
+    agent: scoreDimension(contact, "代理潛力", [
+      { label: "適合代理", weight: 2, terms: ["代理", "agent", "affiliate", "broker", "渠道"] },
+      { label: "帶來用戶", weight: 2, terms: ["用戶", "客戶", "user", "client", "會員"] },
+      { label: "帶來交易量", weight: 2, terms: ["交易量", "volume", "量化", "出入金", "交易"] },
+      { label: "社群流量", weight: 2, terms: ["社群", "流量", "traffic", "tg", "telegram", "kol"] }
+    ]),
+    vip: scoreDimension(contact, "VIP客戶潛力", [
+      { label: "投資能力", weight: 3, terms: ["資金", "fund", "投資", "配置", "高淨值", "vip"] },
+      { label: "資金配置需求", weight: 3, terms: ["配置", "allocation", "理財", "資產", "usdt 出入金", "出入金"] },
+      { label: "交易需求", weight: 4, terms: ["交易", "量化", "trade", "trading", "volume"] }
+    ], { strict: true })
+  };
+}
+
+function scoreDimension(contact, name, rules, options = {}) {
+  const evidence = [];
+  let score = 0;
+  rules.forEach((rule) => {
+    const hit = findEvidence(contact.messages, rule.terms);
+    if (hit) {
+      score += rule.weight;
+      evidence.push({ label: rule.label, quote: hit.text, date: hit.date });
+    }
+  });
+  score = clamp(score, 0, 10);
+  if (options.strict && evidence.length === 0) score = 0;
+  return {
+    name,
+    score,
+    evidence: evidence.slice(0, 3),
+    reason: evidence.length ? `聊天中出現 ${evidence.map((item) => item.label).join("、")} 的明確線索。` : "證據不足：聊天紀錄沒有足夠內容支持此項判斷。"
+  };
+}
+
+function analyzeExchange(contact) {
+  const sorted = [...contact.messages].sort((a, b) => a.date - b.date);
+  let turns = 0;
+  let lastSender = "";
+  sorted.forEach((message) => {
+    if (lastSender && message.sender !== lastSender) turns += 1;
+    lastSender = message.sender;
+  });
+  const fromContact = sorted.filter((message) => message.sender === contact.name).length;
+  const fromOthers = sorted.length - fromContact;
+  return {
+    messageCount: sorted.length,
+    fromContact,
+    fromOthers,
+    turnCount: turns,
+    hasBackAndForth: turns >= 2 || (fromContact >= 2 && fromOthers >= 1),
+    replyEvidenceCount: Math.min(turns, fromContact, Math.max(0, fromOthers))
+  };
+}
+
+function analyzeBotLike(contact, exchange) {
+  const texts = contact.messages.map((message) => message.text).filter(Boolean);
+  const lowerTexts = texts.map((text) => text.toLowerCase());
+  const templateTerms = ["dear", "hello friend", "investment opportunity", "guaranteed", "whatsapp", "kindly", "sir", "madam", "点击", "點擊", "收益", "稳赚", "保證獲利"];
+  const templateHits = lowerTexts.reduce((sum, text) => sum + templateTerms.filter((term) => text.includes(term)).length, 0);
+  const linkHeavy = texts.filter((text) => /(https?:\/\/|t\.me\/|wa\.me\/)/i.test(text)).length;
+  const repeated = countRepeatedMessages(texts);
+  const lowReply = exchange.fromOthers === 0 && exchange.fromContact >= 2;
+  const isLikelyBot = templateHits >= 2 || repeated >= 2 || (lowReply && (linkHeavy >= 1 || templateHits >= 1));
+  return {
+    isLikelyBot,
+    score: clamp(templateHits * 2 + repeated * 2 + linkHeavy + (lowReply ? 3 : 0), 0, 10),
+    evidence: collectBotEvidence(contact.messages, templateTerms).slice(0, 3),
+    reason: isLikelyBot ? "疑似模板或機器人訊息：缺少有來有回，且出現重複、外連或罐頭語句。" : "未看到明顯模板機器人特徵。"
+  };
+}
+
+function analyzeLanguage(contact) {
+  const text = contact.messages.map((message) => message.text).join(" ");
+  const chinese = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+  const latin = (text.match(/[a-zA-Z]/g) || []).length;
+  const total = Math.max(1, chinese + latin);
+  const primary = chinese / total > 0.35 ? "中文" : latin / total > 0.55 ? "英文/外語" : "混合";
+  return { primary, chineseRatio: Math.round((chinese / total) * 100), latinRatio: Math.round((latin / total) * 100) };
+}
+
+function calculateEvidenceValue(dimensions, exchange, bot) {
+  const weighted =
+    dimensions.resources.score * 2.1 +
+    dimensions.influence.score * 1.5 +
+    dimensions.crypto.score * 1.8 +
+    dimensions.willingness.score * 1.8 +
+    dimensions.agent.score * 1.4 +
+    dimensions.vip.score * 1.1;
+  const exchangeBonus = exchange.hasBackAndForth ? 12 : -18;
+  const botPenalty = bot.isLikelyBot ? 35 : 0;
+  return clamp(Math.round(weighted + exchangeBonus - botPenalty), 0, 100);
+}
+
+function calculateInteractionScore(contact, exchange, bot, lastContactDays) {
+  const base = exchange.hasBackAndForth ? 58 : 24;
+  const turnBonus = Math.min(22, exchange.turnCount * 4);
+  const recencyPenalty = Math.max(0, lastContactDays - 30) * 0.25;
+  return clamp(Math.round(base + turnBonus + Math.min(14, contact.messages.length * 2) - recencyPenalty - (bot.isLikelyBot ? 28 : 0)), 0, 100);
+}
+
+function calculateConfidence(contact, dimensions, exchange, bot) {
+  const evidenceCount = Object.values(dimensions).reduce((sum, item) => sum + item.evidence.length, 0);
+  const base = Math.min(70, contact.messages.length * 7 + evidenceCount * 6 + exchange.turnCount * 4);
+  return clamp(Math.round(base + (exchange.hasBackAndForth ? 10 : 0) - (bot.isLikelyBot ? 22 : 0)), 5, 100);
 }
 
 function inferRole(text) {
@@ -450,6 +598,7 @@ function inferTags(text, platform) {
 }
 
 function getSegment(contact) {
+  if (contact.bot?.isLikelyBot) return "疑似模板訊息";
   if (contact.risk) return "高價值流失風險";
   if (contact.rising) return "活躍上升";
   if (contact.dormant) return "沉睡關係";
@@ -459,11 +608,72 @@ function getSegment(contact) {
 
 function getRecommendation(contact, flags) {
   const primary = flags.tags?.[1] || "合作";
+  if (flags.bot?.isLikelyBot || flags.confidence < 25) return "證據不足或疑似模板訊息，不建議投入時間。";
   if (flags.risk) return `48 小時內聯絡，先用「最近剛好在整理 ${primary} 資源，想到你可能用得上」恢復互動。`;
   if (flags.rising) return "近期互動熱度高，這週適合約 15 分鐘 quick sync，推進 AMA、聯名活動或 referral。";
   if (flags.dormant) return "超過 90 天未互動，先用市場情報或近況關心重新連線，不要一開始就硬推合作。";
   if (flags.valueScore >= 80) return "價值分數高，放進月度維護名單，固定分享市場情報、活動名額或可交換資源。";
   return "維持輕量互動即可，有明確活動、名單或資源時再主動觸發。";
+}
+
+function inferPersonType(dimensions, text, valueScore) {
+  if (dimensions.vip.score >= 7) return "VIP客戶";
+  if (dimensions.agent.score >= 7) return "加密代理";
+  if (/kol|influencer|creator|短影音|youtube|ig/i.test(text)) return "KOL";
+  if (/交易所|exchange|cex|listing|上幣|bd/i.test(text)) return "交易所BD";
+  if (/項目方|project|defi|protocol|founder/i.test(text)) return "項目方";
+  if (/投資人|vc|fund|angel/i.test(text)) return "投資人";
+  if (/創業|founder|co-founder|startup/i.test(text)) return "創業者";
+  if (/交易|trading|量化|trade/i.test(text)) return "交易員";
+  if (dimensions.resources.score >= 6 || dimensions.influence.score >= 6) return "資源整合者";
+  return valueScore >= 45 ? "一般用戶" : "一般用戶";
+}
+
+function inferCollaboration(personType, dimensions, bot, confidence) {
+  if (bot.isLikelyBot || confidence < 25) return "不建議投入時間";
+  if (personType === "VIP客戶") return "VIP維護";
+  if (personType === "KOL") return "KOL合作";
+  if (personType === "加密代理" || dimensions.agent.score >= 7) return "招募代理";
+  if (personType === "交易所BD" || personType === "項目方" || dimensions.resources.score >= 7) return "商務合作";
+  if (dimensions.influence.score >= 6 && dimensions.willingness.score >= 5) return "資源交換";
+  if (dimensions.resources.score >= 5 && dimensions.crypto.score >= 5) return "客戶開發";
+  if (/KOL|社群|AMA/.test(Object.values(dimensions).map((item) => item.reason).join(" "))) return "活動合作";
+  return "不建議投入時間";
+}
+
+function buildAiSummary({ dimensions, personType, collaboration, confidence, bot }) {
+  if (bot.isLikelyBot) return "疑似模板或機器人訊息，缺少有效互動，不建議投入時間。";
+  const top = Object.values(dimensions)
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 2)
+    .map((item) => item.name)
+    .join("、");
+  if (!top || confidence < 25) return "聊天證據不足，暫時無法判斷商業合作價值。";
+  return `此人較像${personType}，聊天中有${top}線索。可先以${collaboration}切入，確認是否能帶來客戶、社群或合作資源。`;
+}
+
+function findEvidence(messages, terms) {
+  return messages.find((message) => {
+    const text = message.text.toLowerCase();
+    return terms.some((term) => text.includes(term.toLowerCase()));
+  });
+}
+
+function countRepeatedMessages(texts) {
+  const normalized = texts.map((text) => text.trim().toLowerCase()).filter((text) => text.length > 16);
+  const counts = new Map();
+  normalized.forEach((text) => counts.set(text, (counts.get(text) || 0) + 1));
+  return Array.from(counts.values()).filter((count) => count > 1).length;
+}
+
+function collectBotEvidence(messages, terms) {
+  return messages
+    .filter((message) => {
+      const text = message.text.toLowerCase();
+      return terms.some((term) => text.includes(term)) || /(https?:\/\/|t\.me\/|wa\.me\/)/i.test(message.text);
+    })
+    .map((message) => ({ label: "模板/外連", quote: message.text, date: message.date }));
 }
 
 function render() {
@@ -493,7 +703,7 @@ function renderPreview(extra = {}) {
 
 function renderMetrics() {
   const total = contacts.length;
-  const highValue = contacts.filter((item) => item.valueScore >= 80).length;
+  const highValue = contacts.filter((item) => item.valueScore >= 70 && item.confidence >= 35 && !item.bot.isLikelyBot).length;
   const rising = contacts.filter((item) => item.rising).length;
   const dormant = contacts.filter((item) => item.dormant).length;
   const risk = contacts.filter((item) => item.risk).length;
@@ -519,11 +729,12 @@ function renderContacts(items) {
     node.querySelector("h3").textContent = contact.name;
     node.querySelector("small").textContent = `${contact.platform} · ${contact.role} · ${contact.segment}`;
     node.querySelector(".score").textContent = `${contact.priorityScore}%`;
-    node.querySelector("p").textContent = contact.note;
+    node.querySelector("p").textContent = contact.aiSummary;
     node.querySelector(".tags").innerHTML = [
       ...contact.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`),
       contact.rising ? '<span class="tag hot">活躍上升</span>' : "",
-      contact.risk ? '<span class="tag risk">流失風險</span>' : ""
+      contact.risk ? '<span class="tag risk">流失風險</span>' : "",
+      contact.bot.isLikelyBot ? '<span class="tag risk">疑似模板/機器人</span>' : ""
     ].join("");
     node.querySelector(".contact-meta").innerHTML = `
       <span>訊息 ${contact.messages.length} 則</span>
@@ -531,8 +742,10 @@ function renderContacts(items) {
       <span>互動 ${contact.interactionScore}/100</span>
       <span>價值 ${contact.valueScore}/100</span>
       <span>健康度 ${contact.healthScore}%</span>
+      <span>信心度 ${contact.confidence}%</span>
+      <span>語言 ${contact.language.primary}</span>
     `;
-    node.querySelector(".recommendation").textContent = contact.recommendation;
+    node.querySelector(".recommendation").innerHTML = renderContactAnalysis(contact);
     els.contactList.appendChild(node);
   });
 }
@@ -541,19 +754,66 @@ function renderActions() {
   els.actionList.innerHTML = contacts
     .slice(0, 10)
     .map((contact, index) => `
-      <article class="action-item">
-        <strong><span class="action-rank">${index + 1}</span>${escapeHtml(contact.name)}</strong>
-        <p>${escapeHtml(contact.recommendation)}</p>
+        <article class="action-item">
+          <strong><span class="action-rank">${index + 1}</span>${escapeHtml(contact.name)}</strong>
+        <p>${escapeHtml(contact.collaboration)} · ${escapeHtml(contact.recommendation)}</p>
+        </article>
+      `)
+    .join("");
+}
+
+function renderContactAnalysis(contact) {
+  const dimensionCards = Object.values(contact.dimensions)
+    .map((dimension) => `
+      <article class="dimension-card">
+        <div class="dimension-head">
+          <strong>${escapeHtml(dimension.name)}</strong>
+          <span>${dimension.score}/10</span>
+        </div>
+        <p>${escapeHtml(dimension.reason)}</p>
+        <div class="evidence-list">
+          ${dimension.evidence.length ? dimension.evidence.map(renderEvidence).join("") : '<small>證據不足</small>'}
+        </div>
       </article>
     `)
     .join("");
+
+  return `
+    <div class="analysis-summary">
+      <div><small>人物類型</small><strong>${escapeHtml(contact.personType)}</strong></div>
+      <div><small>推薦合作方式</small><strong>${escapeHtml(contact.collaboration)}</strong></div>
+      <div><small>信心度</small><strong>${contact.confidence}%</strong></div>
+      <div><small>有來有回</small><strong>${contact.exchange.hasBackAndForth ? "是" : "否"}</strong></div>
+      <div><small>模板風險</small><strong>${contact.bot.isLikelyBot ? "偏高" : "未見明顯風險"}</strong></div>
+    </div>
+    <p class="ai-summary">${escapeHtml(contact.aiSummary)}</p>
+    <details class="analysis-details">
+      <summary>查看完整評分依據</summary>
+      <div class="dimension-grid">${dimensionCards}</div>
+      <article class="dimension-card">
+        <div class="dimension-head"><strong>模板 / 機器人檢查</strong><span>${contact.bot.score}/10</span></div>
+        <p>${escapeHtml(contact.bot.reason)}</p>
+        <div class="evidence-list">
+          ${contact.bot.evidence.length ? contact.bot.evidence.map(renderEvidence).join("") : '<small>未找到模板或外連證據</small>'}
+        </div>
+      </article>
+      <article class="dimension-card">
+        <div class="dimension-head"><strong>推薦行動</strong><span>${escapeHtml(contact.collaboration)}</span></div>
+        <p>${escapeHtml(contact.recommendation)}</p>
+      </article>
+    </details>
+  `;
+}
+
+function renderEvidence(item) {
+  return `<blockquote><span>${escapeHtml(item.label)}</span>${escapeHtml(trimEvidence(item.quote))}</blockquote>`;
 }
 
 function renderPlaybook() {
   const riskCount = contacts.filter((item) => item.risk).length;
   const risingCount = contacts.filter((item) => item.rising).length;
   const dormantCount = contacts.filter((item) => item.dormant).length;
-  const highValueCount = contacts.filter((item) => item.valueScore >= 80).length;
+  const highValueCount = contacts.filter((item) => item.valueScore >= 70 && item.confidence >= 35 && !item.bot.isLikelyBot).length;
   const items = [
     `先處理 ${riskCount} 位高價值流失風險人脈，這類人不要再等自然互動。`,
     `把 ${risingCount} 位活躍上升的人安排成活動、AMA、聯名或 referral 的短期機會。`,
@@ -614,6 +874,11 @@ function senderFromPath(path) {
 function shortPath(path) {
   const parts = String(path || "").split(/[\\/]/).filter(Boolean);
   return parts.slice(-3).join("/");
+}
+
+function trimEvidence(text) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  return clean.length > 120 ? `${clean.slice(0, 120)}...` : clean;
 }
 
 function countMatches(text, terms) {
